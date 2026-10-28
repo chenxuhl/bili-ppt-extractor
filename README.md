@@ -123,7 +123,7 @@ Not supported; the scan needs a finite, seekable stream.
 
 ## Contributing
 
-Issues and pull requests are welcome. The project uses Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`).
+Issues and pull requests are welcome. The project uses Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`), with commit messages written in English.
 
 ## License
 

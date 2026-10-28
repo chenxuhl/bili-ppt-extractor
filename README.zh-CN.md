@@ -123,7 +123,7 @@ python dev-test/validate_pptx.py  # zip 完整性 + python-pptx 校验
 
 ## 参与贡献
 
-欢迎 Issue 与 PR。提交信息使用 Conventional Commits（`feat:`、`fix:`、`docs:`、`chore:`）。
+欢迎 Issue 与 PR。提交信息使用 Conventional Commits（`feat:`、`fix:`、`docs:`、`chore:`），并以英文撰写。
 
 ## 许可证
 
