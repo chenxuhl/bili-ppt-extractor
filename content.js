@@ -41,7 +41,6 @@
   }
 
   // ---------------- 状态 ----------------
-  const LS_KEY = 'bilippt.settings.v1';
   const state = {
     video: null,
     host: null, shadow: null,
@@ -52,15 +51,25 @@
     crop: null,     // {x,y,w,h} 归一化 0..1
     settings: { step: 3, threshold: 5, startStr: '', endStr: '' },
   };
-  try {
-    const saved = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
-    if (saved) state.settings = Object.assign(state.settings, saved);
-    if (saved.crop) state.crop = saved.crop;
-  } catch (e) { /* ignore */ }
+
+  // 扩展自身数据走 chrome.storage.local（不污染页面源，也不受站点清理影响）
+  function loadSaved() {
+    return new Promise((resolve) => {
+      try {
+        if (!chrome.storage || !chrome.storage.local) { resolve(null); return; }
+        chrome.storage.local.get(['settings', 'crop'], (res) => {
+          if (chrome.runtime.lastError) { resolve(null); return; }
+          resolve(res || null);
+        });
+      } catch (e) { resolve(null); }
+    });
+  }
 
   function persist() {
     try {
-      localStorage.setItem(LS_KEY, JSON.stringify({ ...state.settings, crop: state.crop }));
+      if (chrome.storage && chrome.storage.local) {
+        chrome.storage.local.set({ settings: state.settings, crop: state.crop || null });
+      }
     } catch (e) { /* ignore */ }
   }
 
@@ -384,7 +393,16 @@
     }
     .bp-btn.ghost:hover:not(:disabled) { background: rgba(255,255,255,.14); }
     .bp-btn.small { padding: 7px 12px; font-size: 12px; background: rgba(255,255,255,.08); color: #d9d9e0; border: 1px solid rgba(255,255,255,.1); font-weight: 600; }
+    .bp-btn.small.accent { background: #fb7299; color: #fff; border-color: #fb7299; }
     .bp-btn.stop { background: rgba(255,77,79,.15); color: #ff6f71; border: 1px solid rgba(255,77,79,.35); padding: 11px 14px; font-size: 13px; }
+
+    .bp-croprow { margin-top: 8px; }
+    .bp-croplabel { font-size: 11.5px; color: #9a9aa5; }
+    .bp-scanrow { display: flex; gap: 9px; }
+    .bp-scanrow .bp-btn.primary { flex: 1.4; }
+    .bp-res-ops { display: flex; gap: 6px; }
+    .bp-warn { color: #ffb027; }
+    .hidden { display: none !important; }
 
     .bp-progress { display: none; margin-bottom: 12px; }
     .bp-progress.on { display: block; }
@@ -514,17 +532,17 @@
             <input id="t0" placeholder="起点 0:00" title="扫描起始时间，支持 90 / 1:30 / 1:00:30">
             <input id="t1" placeholder="终点（默认结尾）" title="扫描结束时间，留空=视频结尾">
           </div>
-          <div class="bp-row" style="margin-top:8px;">
+          <div class="bp-row bp-croprow">
             <label>画面裁剪</label>
             <button class="bp-btn small" id="cropBtn">选取区域…</button>
-            <span id="cropLabel" style="font-size:11.5px;color:#9a9aa5;">全画面</span>
+            <span id="cropLabel" class="bp-croplabel">全画面</span>
           </div>
           <div class="bp-hint">阈值越小越容易判定为“新的一页”；摄像头/水印干扰画面时，用裁剪只保留 PPT 区域。</div>
         </div>
 
-        <div class="bp-sec" style="display:flex;gap:9px;">
-          <button class="bp-btn primary" id="scanBtn" style="flex:1.4;">开始扫描</button>
-          <button class="bp-btn stop" id="stopBtn" style="display:none;">停止</button>
+        <div class="bp-sec bp-scanrow">
+          <button class="bp-btn primary" id="scanBtn">开始扫描</button>
+          <button class="bp-btn stop hidden" id="stopBtn">停止</button>
           <button class="bp-btn ghost" id="reScanBtn" title="重新扫描（清空当前结果）">重扫</button>
         </div>
 
@@ -535,7 +553,7 @@
 
         <div class="bp-res-head">
           <span>识别结果 <b><em id="cntTotal">0</em></b> 页 · 已选 <b id="cntSel">0</b></span>
-          <span style="display:flex;gap:6px;">
+          <span class="bp-res-ops">
             <button class="bp-btn small" id="allBtn">全选</button>
             <button class="bp-btn small" id="noneBtn">全不选</button>
           </span>
@@ -561,7 +579,7 @@
           <div class="bp-modal-actions">
             <button class="bp-btn small" id="cropClear">清除裁剪</button>
             <button class="bp-btn small" id="cropCancel">取消</button>
-            <button class="bp-btn small" id="cropApply" style="background:#fb7299;color:#fff;border-color:#fb7299;">应用</button>
+            <button class="bp-btn small accent" id="cropApply">应用</button>
           </div>
         </div>
       </div>
@@ -575,7 +593,7 @@
     state.panel = panel;
     state.fab = fab;
     wireEvents(shadow);
-    syncSettingsToUI();
+    // 设置由启动流程在 loadSaved() 完成后统一 syncSettingsToUI()
   }
 
   function el(id) { return state.shadow.getElementById(id); }
@@ -671,12 +689,12 @@
     dot.className = 'bp-dot ok';
     const res = v.videoWidth ? ` · ${v.videoWidth}×${v.videoHeight}` : '';
     info.innerHTML = `<b>已就绪</b> 时长 ${formatTime(v.duration)}${res}` +
-      (v.videoWidth && v.videoWidth < 720 ? ' · <span style="color:#ffb027">清晰度偏低，建议调高</span>' : '');
+      (v.videoWidth && v.videoWidth < 720 ? ' · <span class="bp-warn">清晰度偏低，建议调高</span>' : '');
   }
 
   function setScanUI(on) {
-    el('scanBtn').style.display = on ? 'none' : '';
-    el('stopBtn').style.display = on ? '' : 'none';
+    el('scanBtn').classList.toggle('hidden', on);
+    el('stopBtn').classList.toggle('hidden', !on);
     el('prog').classList.toggle('on', on);
     ['step', 'th', 't0', 't1', 'cropBtn', 'reScanBtn'].forEach((id) => { el(id).disabled = on; });
   }
@@ -856,6 +874,32 @@
     state.panel.classList.toggle('open');
     updateInfo();
   };
-  setInterval(watchVideo, 2000);
+
+  // 设置持久化在 chrome.storage.local，异步加载后再同步 UI
+  loadSaved().then((saved) => {
+    if (saved) {
+      if (saved.settings) state.settings = Object.assign(state.settings, saved.settings);
+      if (saved.crop) state.crop = saved.crop;
+    }
+    syncSettingsToUI();
+  });
+
+  const watchTimer = setInterval(watchVideo, 2000);
   watchVideo();
+
+  // 孤儿脚本检测：扩展被重载/更新后，旧 content script 的 chrome API 会失效，
+  // 此时自动卸载 UI，避免残留出无效面板（下次注入会因开关被清空而重新初始化）
+  const orphanTimer = setInterval(() => {
+    let orphaned = false;
+    try {
+      if (!chrome.runtime || !chrome.runtime.id) orphaned = true;
+    } catch (e) { orphaned = true; }
+    if (!orphaned) return;
+    clearInterval(orphanTimer);
+    clearInterval(watchTimer);
+    state.abort = true; // 让进行中的扫描循环尽快退出
+    try { clearResults(); } catch (e) { /* ignore */ }
+    if (state.host && state.host.parentNode) state.host.remove();
+    window.__BILI_PPT_TOGGLE__ = null;
+  }, 5000);
 })();
