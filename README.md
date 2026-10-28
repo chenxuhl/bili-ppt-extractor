@@ -1,76 +1,130 @@
-# B站视频PPT提取器（Chrome 扩展）
+<div align="center">
 
-在哔哩哔哩视频页面上，自动识别"翻页"并提取视频中的 PPT，导出为 **PPTX**（可直接用 PowerPoint / WPS / Keynote 打开）或 **图片 ZIP**。
+# Bilibili slide extractor
 
-**不需要下载视频**——直接复用页面正在播放的视频流抽帧，画质即所见。
+**Turn the slides inside a Bilibili video into a real `.pptx` file, entirely in your browser.**
 
-## 安装（一次性，约 30 秒）
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Chrome extension](https://img.shields.io/badge/platform-Chrome%20%2F%20Edge-4285F4.svg)](#installation)
+[![Manifest V3](https://img.shields.io/badge/manifest-v3-34A853.svg)](manifest.json)
+[![Zero dependencies](https://img.shields.io/badge/dependencies-none-FB7299.svg)](#how-it-works)
 
-1. 打开 Chrome，地址栏输入 `chrome://extensions` 回车。
-2. 打开右上角的 **开发者模式** 开关。
-3. 点击左上角 **加载已解压的扩展程序**，选择本目录（`bili-ppt-extractor`）。
-4. 工具栏出现粉色图标即安装成功（Edge 同样支持：`edge://extensions` → 开发者模式 → 加载解压缩的扩展）。
+**English** | [简体中文](README.zh-CN.md)
 
-## 使用
+</div>
 
-1. 打开任意 B 站视频页（如 `www.bilibili.com/video/BVxxxx`），**先在播放器把清晰度切到最高**（抽帧画质 = 你看到的画质）。
-2. 页面右下角出现粉色「提取PPT」悬浮按钮，点击展开面板。
-3. （可选）调整设置：
-   - **采样间隔**：默认 3 秒/帧。PPT 切换频繁可降到 1–2s；长视频嫌慢可升到 5s。
-   - **翻页阈值**：默认 5。识别出太多"假翻页"（摄像头晃动、画面小变化）就调大；漏页就调小。
-   - **画面裁剪**：如果视频里有讲师人像/摄像头角标遮挡，点「选取区域…」框出 PPT 所在区域。
-   - **起止时间**：可只扫视频的某一段（支持 `90`、`1:30`、`1:00:30` 格式）。
-4. 点 **开始扫描**。工具会自动暂停视频、逐段跳转抽帧，实时显示识别出的每一页。
-5. 扫描完成（或中途点停止），在缩略图列表中**勾掉误识别的页**（单击勾选/取消，双击放大预览；疑似重复页会自动标记并默认不勾选）。
-6. 点 **导出 PPTX** 下载，完成 ✅
+## What it does
 
-## 工作原理
+Given a Bilibili video page, the extension seeks through the video frame by frame, detects every slide change, and exports one settled frame per slide as a PowerPoint file. It works directly on the page's playing stream: no video download, no server, no third-party library, and the export quality matches whatever quality you are watching.
 
-- 内容脚本直接操作页面 `<video>` 元素做程序化 seek（无需任何下载器）。
-- 每个采样点抓取一帧，缩小成 48×27 灰度"签名"，相邻帧平均差超过阈值 → 判定翻页。
-- 每个稳定片段取**最后一帧**（翻页前的稳定画面）作为该页 PPT。
-- 纯浏览器内合成 PPTX：内置 CRC32 + store-only ZIP + 最小合法 OOXML（presentation / slideMaster / slideLayout / theme / slides），**零第三方依赖**，生成的文件已通过 python-pptx 结构验证。
+## Features
 
-## 常见问题
+- **Automatic slide detection.** Frames are compared as downscaled grayscale signatures; a change above a configurable threshold marks a new slide.
+- **Duplicate marking.** When a lecturer flips back to an earlier slide, the revisit is flagged as a suspected duplicate and left unchecked by default.
+- **Region cropping.** If a talking head, watermark, or corner overlay covers part of the frame, drag a crop box around the slide area; detection and export then use that region only.
+- **Time range.** Scan a segment (for example the lecture part after the intro) instead of the full video.
+- **Adjustable sampling.** Sampling interval from 1 to 10 seconds and a change threshold you can tune per video.
+- **Two export formats.** A ready-to-open PPTX, or a ZIP of numbered JPEG images with timestamps in the file names.
 
-| 问题 | 说明 |
+## Installation
+
+1. Download or clone this repository.
+2. Open `chrome://extensions` (or `edge://extensions` in Edge).
+3. Enable **Developer mode**.
+4. Click **Load unpacked** and select the repository folder.
+
+The toolbar icon opens and closes the panel; on a supported video page the pill button is also available at the bottom right of the page.
+
+## Usage
+
+1. Open a video on `www.bilibili.com` and **switch the player to the highest available quality**, because frames are captured at the quality you are watching (width capped at 1920).
+2. Click the pink **提取PPT** pill at the bottom right of the page.
+3. Optionally adjust the settings:
+   - **Sampling interval** (default 3 s). Lower it for fast slide changes, raise it for long videos.
+   - **Change threshold** (default 5). Raise it when small motion triggers false pages, lower it when real pages are missed.
+   - **Crop region.** Play the video to a point where the slide is visible, click **选取区域…**, and drag a box.
+   - **Time range.** Values such as `90`, `1:30`, or `1:00:30` are accepted; an empty end field means "until the end".
+4. Click **开始扫描**. The video pauses and the extension starts seeking; thumbnails appear live as pages are recognized.
+5. Click a thumbnail to toggle it, double-click to preview it large. Uncheck anything you do not want.
+6. Click **⬇ 导出 PPTX** and the file downloads.
+
+Keep the tab open during the scan and do not change quality or switch parts mid-scan; the extension detects such changes and clears results.
+
+## How it works
+
+The extension runs entirely in the content script of the video page:
+
+1. The page's own `<video>` element is driven programmatically: the player is paused, then `currentTime` is stepped through the requested range.
+2. At each sample point a frame is drawn to a canvas. A 48 x 27 grayscale signature is computed for change detection, and a full-resolution JPEG (width capped at 1920) is kept as the candidate image.
+3. Consecutive signatures are compared by mean absolute difference. A difference above the threshold starts a new segment; each segment is represented by its **last** frame, the one settled right before the next change.
+4. Export builds the PPTX in the browser. `pptx-builder.js` implements CRC32, a store-only ZIP writer, and a minimal but complete OOXML package (presentation, slide master, slide layout, theme, one image per slide) with no dependencies. Danmaku and player UI never appear in the output because frames are read from the video stream itself, not from a screen capture.
+
+## Permissions
+
+| Permission | Why |
 | --- | --- |
-| 导出的图模糊 | 扫描前把播放器清晰度切到最高（1080P/4K）。抽帧分辨率=当前播放分辨率（上限宽 1920）。 |
-| 识别出很多重复页 | 正常——讲师来回翻页会回到旧页面，工具自动标记「疑似重复」并默认不勾选，可手动改。 |
-| 讲师人像遮挡 PPT | 用「画面裁剪」只框选 PPT 区域，识别与导出都只处理该区域。 |
-| 扫描很慢 | 1 小时视频、3s 间隔约 1200 次抽帧，一般 3–6 分钟。可加大采样间隔或用起止时间只扫正片部分。 |
-| 扫描中请勿 | 切换清晰度、切分P、刷新或关闭页面（会导致结果不完整；工具会自动检测到视频切换并清空结果）。 |
-| 直播 / 互动视频 | 暂不支持（依赖确定的视频时长与可 seek 性）。 |
-| 弹幕会进画面吗 | 不会。弹幕是 DOM 覆盖层，抽帧直接取自视频流本身。 |
+| `activeTab` | Grants temporary access to the current tab when you click the toolbar icon, used only to inject the script as a fallback. No standing host access. |
+| `scripting` | Programmatic injection for the fallback path described above. |
+| `storage` | Saves your settings (interval, threshold, crop, time range) in `chrome.storage.local`. The extension reads no site data. |
 
-## 权限说明（最小权限原则）
+There are no `host_permissions`, no remote code, and no network calls. Content scripts are declared statically for `www.bilibili.com/video/*`, `/bangumi/play/*`, and `/festival/*`.
 
-| 权限 | 用途 |
-| --- | --- |
-| `activeTab` | 仅在你点击扩展图标时，临时获得当前标签页的访问权（用于兜底注入内容脚本），不常驻、不弹警告 |
-| `scripting` | 点击图标后向当前页程序化注入脚本（仅此用途） |
-| `storage` | 把你的扫描设置（间隔/阈值/裁剪）存在 `chrome.storage.local`，不读写任何站点数据 |
-
-声明式 content_scripts 按 `matches` 自动注入，不需要 host 权限；本扩展**没有**任何 `host_permissions`，无远程代码，全部逻辑本地执行。
-
-## 目录结构
+## Project structure
 
 ```
 bili-ppt-extractor/
-├── manifest.json          # MV3 扩展清单
-├── background.js           # service worker：图标点击 → 切换/兜底注入
-├── content.js              # 抽帧扫描、翻页检测、去重、裁剪、导出、面板 UI
-├── pptx-builder.js         # 纯 JS：CRC32 + ZIP + PPTX 生成（浏览器/Node 通用）
-├── icons/                  # 扩展图标
-├── dev-assets/make_icons.py    # 图标生成脚本（Pillow）
-└── dev-test/               # 测试：make_slides.py → build_test_pptx.js → validate_pptx.py
+├── manifest.json           # MV3 manifest
+├── background.js           # service worker: toolbar click, fallback injection
+├── content.js              # scanning, change detection, dedup, cropping, UI, export
+├── pptx-builder.js         # CRC32 + store-only ZIP + minimal OOXML PPTX writer
+├── icons/                  # extension icons
+├── dev-assets/             # icon generation script (Pillow)
+└── dev-test/               # test suites, see Development
 ```
 
-## 开发者：跑测试
+## Development
+
+Requirements: Node.js 18+ (only for tests, the extension itself has none) and Python 3 with `python-pptx` and `Pillow`.
+
+### Structure test
+
+Builds a PPTX through the production `pptx-builder.js` under Node, then opens it with `python-pptx` and asserts the package layout:
 
 ```powershell
-# 生成测试幻灯图 → Node 用真实构建器生成 pptx → python-pptx 验证结构
-python dev-test/make_slides.py
-node dev-test/build_test_pptx.js
-python dev-test/validate_pptx.py
+python dev-test/make_slides.py    # 4 test slides via Pillow
+node   dev-test/build_test_pptx.js # build with the real builder
+python dev-test/validate_pptx.py  # zip integrity + python-pptx checks
 ```
+
+### End-to-end test against a real video
+
+`dev-test/e2e/` contains a dependency-free CDP driver (`run_e2e.mjs`) that launches a real headless Edge with the extension loaded, opens a real Bilibili video, drives the actual panel UI over the DevTools protocol, probes the stream to find a static-slide window, runs a real scan, and captures the exported PPTX from the browser's download shelf.
+
+Note for automation: branded Google Chrome 137 and later silently ignore `--load-extension` on the stable channel, so the harness launches Edge instead. Loading the extension by hand as described in [Installation](#installation) works the same in both browsers.
+
+Status: the harness launches Edge with the extension loaded and the Bilibili page renders in headless mode; the fully automated pass (scan plus captured download) is not yet green, so acceptance still runs through the manual steps in [Usage](#usage).
+
+## FAQ
+
+**The exported images are blurry.**
+Set the player to the highest quality before scanning; captures match the playing stream.
+
+**Too many duplicates or false pages.**
+Revisited slides are flagged and unchecked by default. If motion (a webcam, an animated watermark) creates false pages, raise the change threshold or crop to the slide area.
+
+**The scan is slow.**
+A 1-hour video at a 3-second interval needs roughly 1200 seeks, typically a few minutes. Raise the interval or restrict the time range.
+
+**Do danmaku appear in the export?**
+No. Frames are read from the video stream; danmaku and player UI are DOM overlays.
+
+**Live streams and interactive videos?**
+Not supported; the scan needs a finite, seekable stream.
+
+## Contributing
+
+Issues and pull requests are welcome. The project uses Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`).
+
+## License
+
+[MIT](LICENSE), Copyright (c) 2026 chenxuhl
