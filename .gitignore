@@ -6,7 +6,9 @@ dev-test/slides/
 # E2E 测试运行时产物
 dev-test/e2e/chrome-profile/
 dev-test/e2e/edge-profile/
+dev-test/e2e/e2e-profile/
 dev-test/e2e/downloads/
+dev-test/e2e/verify-pptx/
 dev-test/e2e/*.log
 
 # 系统杂项
