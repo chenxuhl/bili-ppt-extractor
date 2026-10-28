@@ -1,0 +1,8 @@
+# 构建产物（由 dev-test 脚本重新生成）
+dev-test/test-output.pptx
+dev-test/test-output.zip
+dev-test/slides/
+
+# 系统杂项
+Thumbs.db
+.DS_Store

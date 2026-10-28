@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "B站视频PPT提取器",
+  "version": "1.0.0",
+  "description": "在哔哩哔哩视频页面自动识别翻页并提取PPT幻灯片，导出为PPTX或图片ZIP，无需下载视频。",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "提取本页视频的PPT"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://www.bilibili.com/video/*",
+        "*://www.bilibili.com/bangumi/play/*",
+        "*://www.bilibili.com/festival/*"
+      ],
+      "js": ["pptx-builder.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": ["scripting"],
+  "host_permissions": ["*://www.bilibili.com/*"],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
