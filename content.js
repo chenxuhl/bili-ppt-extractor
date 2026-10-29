@@ -192,7 +192,13 @@
   // 输出画布上的精裁:源坐标裁剪后仍会有亚像素黑边经缩放混进输出边缘
   // (实测:636px 输出的最外列/行亮度 112/180,不是内容白底)。
   // 直接在最终画布上按整数像素再裁一刀,量少(1-2px)且精确。
-  // 返回裁后尺寸 {w,h},无暗边返回 null。
+  // 返回 {top,bottom,left,right},无残边返回 null。
+  // 残边判定必须是"相对"的(原实现用绝对阈值 200,深色背景课件
+  // 整体亮度 ~31,四边都被误裁到 10% 上限):
+  //   一行/列是残边 = 绝对偏暗(< 190) 且 明显暗于同侧内缩 3px 处(差 > 50)。
+  // 白底课件残边(112-180 vs 内容 249)满足;深色底课件边缘与内部同暗
+  // (差 ~0)不满足;边缘有亮内容贴边的行均值被拉高也不满足。
+  // 深色底的真黑边由源级 detectDarkEdges 负责,此处只管亚像素残带。
   function trimOutputEdges(ctx, w, h) {
     let px;
     try { px = ctx.getImageData(0, 0, w, h).data; } catch (e) { return null; }
@@ -200,15 +206,27 @@
       const o = (y * w + x) * 4;
       return (px[o] * 299 + px[o + 1] * 587 + px[o + 2] * 114) / 1000;
     };
-    const DARK = 200;   // 内容白底 249+,残留半暗边 112/180;阈值取中间
+    const EDGE_MAX = 190, GAP = 50, INNER_OFF = 3;
     const rowMean = (y) => { let s = 0, n = 0; for (let x = 0; x < w; x += 2) { s += lum(x, y); n++; } return s / n; };
     const colMean = (x) => { let s = 0, n = 0; for (let y = 0; y < h; y += 2) { s += lum(x, y); n++; } return s / n; };
     let top = 0, bottom = 0, left = 0, right = 0;
-    const CAP = Math.floor(Math.min(w, h) * 0.1); // 输出级最多裁 10%
-    while (top < CAP && rowMean(top) < DARK) top++;
-    while (bottom < CAP && rowMean(h - 1 - bottom) < DARK) bottom++;
-    while (left < CAP && colMean(left) < DARK) left++;
-    while (right < CAP && colMean(w - 1 - right) < DARK) right++;
+    const CAP = 4; // 残边是 1-2px 亚像素重分配产物,4px 上限足够且防误裁扩大
+    while (top < CAP) {
+      const edge = rowMean(top), inner = rowMean(Math.min(top + INNER_OFF, h - 1));
+      if (edge < EDGE_MAX && inner - edge > GAP) top++; else break;
+    }
+    while (bottom < CAP) {
+      const edge = rowMean(h - 1 - bottom), inner = rowMean(Math.max(h - 1 - bottom - INNER_OFF, 0));
+      if (edge < EDGE_MAX && inner - edge > GAP) bottom++; else break;
+    }
+    while (left < CAP) {
+      const edge = colMean(left), inner = colMean(Math.min(left + INNER_OFF, w - 1));
+      if (edge < EDGE_MAX && inner - edge > GAP) left++; else break;
+    }
+    while (right < CAP) {
+      const edge = colMean(w - 1 - right), inner = colMean(Math.max(w - 1 - right - INNER_OFF, 0));
+      if (edge < EDGE_MAX && inner - edge > GAP) right++; else break;
+    }
     if (!top && !bottom && !left && !right) return null;
     return { top, bottom, left, right };
   }
@@ -297,7 +315,9 @@
     await seekTo(v, t);
     await sleep(40);
     await nextPaint();
-    return grabFrame(v);
+    const frame = await grabFrame(v);
+    if (frame) frame.t = t; // 记录时间戳:缩略图时间码与导出文件名都依赖它
+    return frame;
   }
 
   // ---------------- 扫描 ----------------
