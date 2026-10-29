@@ -190,18 +190,18 @@
     return rect;
   }
 
-  // 输出画布上的精裁:处理两类残留——
-  // (a) 亚像素残带(1-3px):源坐标裁剪+缩放后,黑边余量被重分配到最外像素
-  //     (实测 636px 输出的边缘亮度 112/180,内容白底 249)。
-  // (b) 源级缓存过期的小漂移(黑边宽度随时间变化,如 BV1SKkcBxEXr
-  //     前段 L87/R88 → 后段 L82/R82)。
-  // 判定:相对落差(inner - edge > 50 且 edge < 190),对任意底色成立;
-  // inner 参考点自适应——从边缘向内找第一个均值 >= 100 的列/行再 +3
-  // (固定 +3 在宽黑边内部取参考,gap 恒 0,宽黑边永远检不出)。
-  // 宽黑边(>CAP)不在输出级处理:深底贴边亮条与黑边几何同构,无法
-  // 可靠区分(实测误裁深色课件 50px),交给源级 detectDarkEdges 的
-  // 缓存自愈(grabFrame 中 trim 有残留时清缓存重检测)。
-  // 返回 {top,bottom,left,right,residue}:residue=任一边仍有 >4px 暗残留
+  // 输出画布上的精裁:源坐标裁剪后仍会有亚像素黑边经缩放混进输出边缘
+  // (实测:636px 输出的最外列/行亮度 112/180,不是内容白底)。
+  // 直接在最终画布上按整数像素再裁一刀,量少(1-2px)且精确。
+  // 返回 {top,bottom,left,right},无残边返回 null。
+  // 残边判定必须是"相对"的(绝对阈值版本曾把深色背景课件整体亮度 ~31
+  // 的四边都裁到 10% 上限):
+  //   一行/列是残边 = 绝对偏暗(< 190) 且 明显暗于同侧内缩 3px 处(差 > 50)。
+  // 白底课件残边(112-180 vs 内容 249)满足;深色底课件边缘与内部同暗
+  // (差 ~0)不满足;边缘有亮内容贴边的行均值被拉高也不满足。
+  // 深色底的真黑边由源级 detectDarkEdges 负责,此处只管亚像素残带,
+  // CAP=4 上限足够且防误裁扩大(大 CAP + 自适应参考曾在深色课件标题带
+  // 上裁掉 8px 真内容——参考点落在亮带上,落差被凭空制造出来)。
   function trimOutputEdges(ctx, w, h) {
     let px;
     try { px = ctx.getImageData(0, 0, w, h).data; } catch (e) { return null; }
@@ -209,96 +209,66 @@
       const o = (y * w + x) * 4;
       return (px[o] * 299 + px[o + 1] * 587 + px[o + 2] * 114) / 1000;
     };
-    const EDGE_MAX = 190, GAP = 50, BRIGHT = 100;
-    const CAP = Math.max(12, Math.floor(Math.min(w, h) * 0.03));
+    const EDGE_MAX = 190, GAP = 50, INNER_OFF = 3;
+    const CAP = 4; // 残边是 1-2px 亚像素重分配产物,4px 上限足够且防误裁扩大
     const rowMean = (y) => { let s = 0, n = 0; for (let x = 0; x < w; x += 2) { s += lum(x, y); n++; } return s / n; };
     const colMean = (x) => { let s = 0, n = 0; for (let y = 0; y < h; y += 2) { s += lum(x, y); n++; } return s / n; };
-    // 自适应 inner 参考:第一个 >= BRIGHT 的位置 +3(找不到=深色课件,返回 -1)
-    function brightOffset(get, size) {
-      for (let i = 0; i < Math.min(size, 64); i++) {
-        if (get(i) >= BRIGHT) return i + 3;
-      }
-      return -1;
+    let top = 0, bottom = 0, left = 0, right = 0;
+    while (top < CAP) {
+      const edge = rowMean(top), inner = rowMean(Math.min(top + INNER_OFF, h - 1));
+      if (edge < EDGE_MAX && inner - edge > GAP) top++; else break;
     }
-    function scanSide(get, size) {
-      const off = brightOffset(get, size);
-      if (off < 0) return { cut: 0, residue: 0 }; // 无亮内容参考(深色底):不裁
-      let cut = 0, residue = 0;
-      while (cut < CAP) {
-        const edge = get(cut);
-        const inner = get(Math.min(cut + off, size - 1));
-        if (edge < EDGE_MAX && inner - edge > GAP) cut++; else break;
-      }
-      // 残留计量:裁到 CAP 仍暗 = 有未处理的宽黑边
-      if (cut >= CAP && get(Math.min(cut, size - 1)) < EDGE_MAX) residue = cut;
-      return { cut, residue };
+    while (bottom < CAP) {
+      const edge = rowMean(h - 1 - bottom), inner = rowMean(Math.max(h - 1 - bottom - INNER_OFF, 0));
+      if (edge < EDGE_MAX && inner - edge > GAP) bottom++; else break;
     }
-    const L = scanSide((i) => colMean(i), w);
-    const R = scanSide((i) => colMean(w - 1 - i), w);
-    const T = scanSide((i) => rowMean(i), h);
-    const B = scanSide((i) => rowMean(h - 1 - i), h);
-    const top = T.cut, bottom = B.cut, left = L.cut, right = R.cut;
-    const residue = Math.max(L.residue, R.residue, T.residue, B.residue);
-    if (!top && !bottom && !left && !right) return (residue > 4) ? { top: 0, bottom: 0, left: 0, right: 0, residue } : null;
-    return { top, bottom, left, right, residue };
+    while (left < CAP) {
+      const edge = colMean(left), inner = colMean(Math.min(left + INNER_OFF, w - 1));
+      if (edge < EDGE_MAX && inner - edge > GAP) left++; else break;
+    }
+    while (right < CAP) {
+      const edge = colMean(w - 1 - right), inner = colMean(Math.max(w - 1 - right - INNER_OFF, 0));
+      if (edge < EDGE_MAX && inner - edge > GAP) right++; else break;
+    }
+    if (!top && !bottom && !left && !right) return null;
+    return { top, bottom, left, right };
   }
 
   function grabFrame(v) {
     const base = regionOf(v);
-    // 自动去黑边:检测到的暗边进一步收缩源区域(在用户裁剪之后叠加),
-    // 以 videoWidth/Height 为缓存 key(切换清晰度后重检)。
-    // 缓存自愈:黑边宽度会随时间漂移(实测 BV1SKkcBxEXr 前段 L87/R88
-    // 后段 L82/R82),过期的缓存矩形会让输出级检出宽残留(trim.residue)。
-    // 此时立即在当前画面上重检测、重裁剪、重绘——本帧即修,不让任何
-    // 一页带陈旧黑边进结果(若推迟到下一帧,漂移帧恰为段末帧时该页
-    // 仍会带黑边导出)。
-    const edgeKey = v.videoWidth + 'x' + v.videoHeight;
-    if (!state._edge || state._edgeKey !== edgeKey) {
-      state._edge = detectDarkEdges(v);
-      state._edgeKey = edgeKey;
+    // 自动去黑边:检测到的暗边进一步收缩源区域(在用户裁剪之后叠加)。
+    // 逐帧探测,不缓存:黑边宽度会随时间漂移(实测 BV1SKkcBxEXr 前段
+    // L87/R88 → 后段 L82/R82,底部黑边只在部分片段出现),按分辨率缓存
+    // 的矩形只对一个时间点正确——变宽则残留黑边,变窄则裁掉真内容;
+    // 且深色帧会污染缓存,残留检测只认"变宽"方向,变窄永远修不回来。
+    // 全分辨率探测每帧 ~10ms,相对每次 seek 的数百毫秒可忽略
+    // (准确度优先)。探测画布复用,避免逐帧分配。
+    const edge = detectDarkEdges(v);
+    let { sx, sy, sw, sh } = base;
+    if (edge) {
+      // 与用户裁剪区域求交集
+      const x0 = Math.max(sx, edge.sx), y0 = Math.max(sy, edge.sy);
+      const x1 = Math.min(sx + sw, edge.sx + edge.sw), y1 = Math.min(sy + sh, edge.sy + edge.sh);
+      if (x1 - x0 > 16 && y1 - y0 > 16) { sx = x0; sy = y0; sw = x1 - x0; sh = y1 - y0; }
     }
-    const cropWith = (edge) => {
-      let { sx, sy, sw, sh } = base;
-      if (edge) {
-        // 与用户裁剪区域求交集
-        const x0 = Math.max(sx, edge.sx), y0 = Math.max(sy, edge.sy);
-        const x1 = Math.min(sx + sw, edge.sx + edge.sw), y1 = Math.min(sy + sh, edge.sy + edge.sh);
-        if (x1 - x0 > 16 && y1 - y0 > 16) { sx = x0; sy = y0; sw = x1 - x0; sh = y1 - y0; }
-      }
-      return { sx, sy, sw, sh };
-    };
+    const scale = Math.min(1, 1920 / sw);
+    const cw = Math.max(2, Math.round(sw * scale));
+    const ch = Math.max(2, Math.round(sh * scale));
+    capCanvas.width = cw; capCanvas.height = ch;
     try {
-      let region = cropWith(state._edge);
-      let trim = null;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const { sx, sy, sw, sh } = region;
-        const scale = Math.min(1, 1920 / sw);
-        const cw = Math.max(2, Math.round(sw * scale));
-        const ch = Math.max(2, Math.round(sh * scale));
-        capCanvas.width = cw; capCanvas.height = ch;
-        capCtx.drawImage(v, sx, sy, sw, sh, 0, 0, cw, ch);
-        // 精裁:源裁剪+缩放后边缘仍会残留黑边(亚像素残带或缓存过期的
-        // 宽残留),在输出画布上直接按整数像素裁掉。
-        // 用临时画布中转(画布不能自引用裁剪,改尺寸还会清空内容)。
-        trim = trimOutputEdges(capCtx, cw, ch);
-        if (trim && trim.residue > 4 && attempt === 0) {
-          // 宽残留 = 源级缓存矩形已过期:当前画面重检测一次,重裁重绘。
-          state._edge = detectDarkEdges(v);
-          state._edgeKey = edgeKey;
-          region = cropWith(state._edge);
-          continue;
+      capCtx.drawImage(v, sx, sy, sw, sh, 0, 0, cw, ch);
+      // 精裁:源裁剪+缩放后边缘仍会残留亚像素黑边,在输出画布上直接按
+      // 整数像素裁掉。用临时画布中转(画布不能自引用裁剪,改尺寸会清空)。
+      const trim = trimOutputEdges(capCtx, cw, ch);
+      if (trim) {
+        const tw = cw - trim.left - trim.right, th = ch - trim.top - trim.bottom;
+        if (tw > 16 && th > 16) {
+          const tmp = document.createElement('canvas');
+          tmp.width = tw; tmp.height = th;
+          tmp.getContext('2d').drawImage(capCanvas, trim.left, trim.top, tw, th, 0, 0, tw, th);
+          capCanvas.width = tw; capCanvas.height = th;
+          capCtx.drawImage(tmp, 0, 0);
         }
-        if (trim) {
-          const tw = cw - trim.left - trim.right, th = ch - trim.top - trim.bottom;
-          if (tw > 16 && th > 16) {
-            const tmp = document.createElement('canvas');
-            tmp.width = tw; tmp.height = th;
-            tmp.getContext('2d').drawImage(capCanvas, trim.left, trim.top, tw, th, 0, 0, tw, th);
-            capCanvas.width = tw; capCanvas.height = th;
-            capCtx.drawImage(tmp, 0, 0);
-          }
-        }
-        break;
       }
       // 签名与导出用同一画面(trim 后):黑边会稀释签名的内容分辨率
       // (实测黑边占宽 26% 时,48px 签名只有 35px 有效内容),也压低

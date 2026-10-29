@@ -33,7 +33,7 @@ depends on `background.js`.
 |------|----------|-------|
 | Find video | `findBestVideo()` | Scores all `<video>` elements: in-player selector match (+1000) then `videoWidth`. |
 | Source region | `regionOf(v)` | User crop (normalized 0..1) → source-pixel rect. |
-| Letterbox edges | `detectDarkEdges(v)` | Full-res probe (cap 1920), col/row mean < 60, 3px JPEG-ring tolerance, 45% inner guard, +1px margin. Cached per `videoWidth x videoHeight`; null results are NOT cached (open issue). |
+| Letterbox edges | `detectDarkEdges(v)` | Full-res probe (cap 1920), col/row mean < 60, 3px JPEG-ring tolerance, 45% inner guard, +1px margin. **Per-frame** (not cached): letterbox width drifts within one video (measured L87→L82 mid-scan), so a cached rect is only right for one moment — widening leaks black bands, narrowing crops real content. ~10ms/frame vs hundreds of ms per seek. |
 | Seek | `seekTo(v, t)` | `seeked` event + `readyState >= 2` poll + 3s timeout; ±0.3s tolerated. |
 | Capture | `captureAt(v, t)` | seekTo → 40ms → paint tick → `grabFrame`; attaches `frame.t` (invariant, see lint). |
 | Frame | `grabFrame(v)` | Crop∩edges → scale (≤1920 wide) → `trimOutputEdges` (relative per-edge test: < 190 and 50 darker than 3px inside, cap 4px) → JPEG bytes + 48×27 grayscale signature. |
@@ -41,7 +41,7 @@ depends on `background.js`.
 | Segmentation | scan loop | Eager: `diff(prevSig, sig) > threshold` cuts immediately; segment frame = last sample before the cut. |
 | Duplicate mark | `finalizeSegment(frame)` | `diff <= threshold * 1.4` vs any earlier segment → `dupOf`, unchecked by default, "回翻→N" badge. |
 | Buildup merge | `mergeBuildups()` | Post-scan: same family (`diff <= th * 1.4`) and content < 65% of a later segment → uncheck, "中间态" badge. |
-| Export | `exportPptx()` / `exportZip()` | Checked segments only; `BiliPptx.buildPptx` (slide size = first slide aspect: landscape cx 12192000 EMU, portrait cy 9144000 EMU) or ZIP of JPEGs named `pNN_MMmSSs.jpg` from `seg.time`. |
+| Export | `exportPptx()` / `exportZip()` | Checked segments only; `BiliPptx.buildPptx` (slide size from the **median** aspect ratio of selected slides, snapped to mainstream ratios within 2% — 16:9 and 4:3 as exact PowerPoint built-ins, others derived at a fixed long edge; each image placed contain-fit, never stretched) or ZIP of JPEGs named `pNN_MMmSSs.jpg` from `seg.time`. |
 
 ## UI structure (shadow DOM, `#bili-ppt-host`)
 
@@ -64,14 +64,10 @@ observable via `#scanBtn` carrying the `hidden` class.
 
 ## Known open issues
 
-1. `detectDarkEdges` samples only the first captured frame per
-   resolution — intro/logo framing can mis-set the crop for the whole
-   scan (docs/DECISIONS.md D4).
-2. Null edge-detection results are re-computed every frame (full-res
-   probe cost on videos without dark edges).
-3. `isBlank` can silently drop minimal-content pages; no UI surfacing
+1. `isBlank` can silently drop minimal-content pages; no UI surfacing
    of skip counts.
-4. `.bp-fab.ready` CSS rule is empty (readiness glow lost in the UI
+2. `.bp-fab.ready` CSS rule is empty (readiness glow lost in the UI
    redesign); the class is still toggled.
-5. Mixed aspect ratios (quality switch mid-scan) stretch later slides
-   to the first slide's aspect.
+
+Resolved by v1.2: per-frame edge probing (was: first-frame cache);
+median aspect ratio with contain placement (was: first-slide stretch).

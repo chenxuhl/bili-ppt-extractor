@@ -57,11 +57,11 @@ The relative per-edge test holds for any background color because it asks
 "does the edge look like the interior", not "is the interior white".
 True dark letterbox edges are the source-level detector's job (D4).
 
-## D4. Full-resolution letterbox probing in `detectDarkEdges`
+## D4. Full-resolution, **per-frame** letterbox probing in `detectDarkEdges`
 
 Probe row/column means at capture resolution (capped 1920), `DARK = 60`,
 `EDGE_TOLERANCE = 3` for JPEG ringing, `MIN_INNER = 45%`, +1px inward
-margin, cached per `videoWidth x videoHeight`.
+margin — **on every captured frame, no caching**.
 
 Why full resolution: a real 1-2px video edge diluted to 0.1 of a column
 on the original 64px probe canvas and never triggered detection
@@ -70,11 +70,19 @@ on the original 64px probe canvas and never triggered detection
 Why the 3px tolerance: JPEG edge ringing brightens the outermost column
 (measured: x=639 mean 85 while the true 1px edge sits at x=638 mean 17).
 
-Known limitation (accepted): edges are sampled from the first captured
-frame only. If the scan starts on an intro logo with different framing,
-the crop is wrong for the whole scan. A null result is also not cached,
-so videos without dark edges pay a full-res probe every frame. Both are
-open issues, not decisions.
+Why per-frame (v1.2, replacing the per-resolution cache): letterbox
+width drifts *within one video* — measured on the reported video:
+L87/R88 in the first half, L82/R82 later, a bottom bar appearing only
+in some segments. A cached rect is correct for exactly one moment:
+widening leaks black bands of varying width into exports (the reported
+bug), narrowing silently crops real content with no correction path.
+The cache was also poisonable by a mid-scan dark slide and never
+invalidated across scans of the same video. A self-heal on detected
+residue was tried and rejected (commit `3f3d6cb`, reverted): it can
+only observe the widening direction, and its trigger was blind to the
+wide-drift cases it was written for (see the v1.2.0 code review).
+Per-frame probing costs ~10ms against hundreds of ms per seek —
+accuracy wins (user-set priority: accuracy over speed).
 
 ## D5. Programmatic seek of the page's own `<video>` element
 
@@ -103,10 +111,13 @@ working tree (see PITFALLS: deleted test chain).
 The slide size is inferred from the **median** aspect ratio of all selected
 slides (not the first slide, which the pre-1.2 code used — an intro logo
 hijacked the whole deck). If the median falls within 2% of a mainstream
-ratio (16:9, 16:10, 3:2, 4:3, 1:1, 5:4, 9:16, 3:4), the exact PowerPoint
-preset page size is used (e.g. 4:3 = 9144000x6858000 EMU = 10x7.5 in);
-otherwise a custom page at the median ratio, long edge anchored at
-12192000 EMU (landscape) / 9144000 EMU (portrait).
+ratio (16:9, 16:10, 3:2, 4:3, 1:1, 5:4, 9:16, 3:4), the page uses that
+ratio exactly: 16:9 and 4:3 at PowerPoint's built-in page sizes
+(12192000x6858000 = 13.33x7.5 in, 9144000x6858000 = 10x7.5 in); the rest
+derived at a fixed long edge (landscape 12192000 EMU, portrait its flip),
+so the geometry is exact even where PowerPoint shows "Custom". Anything
+else: a custom page at the median ratio, long edge anchored at 12192000
+EMU (landscape) / 9144000 EMU (portrait).
 
 Each slide's image is placed contain-fit and centered — never stretched.
 Rejection history:
