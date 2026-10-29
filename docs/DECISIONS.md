@@ -89,11 +89,35 @@ extension dependency-free and store-reviewable, and works with DRM-free
 ## D6. Zero-dependency PPTX writer (`pptx-builder.js`)
 
 CRC32 + store-only ZIP + minimal OOXML, UMD (CommonJS for tests, global
-`BiliPptx` in the page). Slide size derives from the first slide's
-aspect; later slides stretch to it (mixing aspect ratios mid-scan by
-switching quality distorts later slides — the UI warns against switching
-quality during a scan).
+`BiliPptx` in the page). Slide size is inferred per D7; each image is
+placed contain-fit, never stretched (mixing aspect ratios mid-scan by
+switching quality used to distort later slides — the UI warns against
+switching quality during a scan).
 
 Why: no bundler step; the extension loads unpacked sources directly.
 The cost is that this hand-rolled OOXML has no test protection in the
 working tree (see PITFALLS: deleted test chain).
+
+## D7. Median aspect ratio with preset snapping; per-slide contain placement
+
+The slide size is inferred from the **median** aspect ratio of all selected
+slides (not the first slide, which the pre-1.2 code used — an intro logo
+hijacked the whole deck). If the median falls within 2% of a mainstream
+ratio (16:9, 16:10, 3:2, 4:3, 1:1, 5:4, 9:16, 3:4), the exact PowerPoint
+preset page size is used (e.g. 4:3 = 9144000x6858000 EMU = 10x7.5 in);
+otherwise a custom page at the median ratio, long edge anchored at
+12192000 EMU (landscape) / 9144000 EMU (portrait).
+
+Each slide's image is placed contain-fit and centered — never stretched.
+Rejection history:
+
+- First slide's ratio (v1.1 and earlier): one outlier (intro logo, a
+  partial-frame crop) fixed the page size for every slide.
+- Stretch-to-fill: mixed-ratio decks visibly distorted off-ratio pages;
+  also fights the per-frame edge self-healing (D4 follow-up), which
+  legitimately produces slightly different per-page ratios after edge
+  trimming.
+
+Contain-fit means an off-ratio page shows slide-background margins
+instead of distortion; that is the same trade PowerPoint itself makes
+when inserting a mismatched image.

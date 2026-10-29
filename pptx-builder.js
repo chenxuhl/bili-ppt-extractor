@@ -238,7 +238,21 @@
       '</p:sldLayout>';
   }
 
-  function slideXml(cx, cy) {
+  // 单页幻灯片:图片按自身比例 contain 居中放入页面,比例与页面不一致时
+  // 两侧留空(幻灯片背景色),绝不拉伸变形。页面尺寸是全体页的共识,
+  // 个别页比例有偏差(逐帧裁剪的正常副产物)仍保持原生比例显示。
+  function slideXml(cx, cy, imgW, imgH) {
+    var imgRatio = imgW / imgH, pageRatio = cx / cy;
+    var pw, ph, ox, oy;
+    if (imgRatio >= pageRatio) {
+      // 图片更宽:左右撑满,上下留空
+      pw = cx; ph = Math.round(cx / imgRatio);
+      ox = 0; oy = Math.round((cy - ph) / 2);
+    } else {
+      // 图片更高:上下撑满,左右留空
+      ph = cy; pw = Math.round(cy * imgRatio);
+      ox = Math.round((cx - pw) / 2); oy = 0;
+    }
     return XML_DECL +
       '<p:sld xmlns:a="' + NS_A + '" xmlns:r="' + NS_R + '" xmlns:p="' + NS_P + '">' +
       '<p:cSld>' +
@@ -246,7 +260,7 @@
       '<p:pic>' +
       '<p:nvPicPr><p:cNvPr id="2" name="Slide"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>' +
       '<p:blipFill><a:blip r:embed="rId2"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>' +
-      '<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="' + cx + '" cy="' + cy + '"/></a:xfrm>' +
+      '<p:spPr><a:xfrm><a:off x="' + ox + '" y="' + oy + '"/><a:ext cx="' + pw + '" cy="' + ph + '"/></a:xfrm>' +
       '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>' +
       '</p:pic>' +
       '</p:spTree>' +
@@ -317,14 +331,39 @@
     }
     opts = opts || {};
 
-    var first = slides[0];
-    var cx, cy;
-    if (first.w >= first.h) {
-      cx = 12192000;
-      cy = Math.round(12192000 * first.h / first.w);
+    // 幻灯片尺寸:由所有页比例推断,而非只看第一页。
+    // 1) 取比例中位数(个别离群页如片头全屏 logo 不绑架整体尺寸);
+    // 2) 命中主流比例(2% 容差)用 PowerPoint 标准预设尺寸,保证在
+    //    PowerPoint 里显示为 16:9 / 4:3 等标准页面而非怪异自定义值;
+    // 3) 未命中则按中位比例生成自定义尺寸。
+    // 长边锚定:横版 12192000 EMU(13.33in),竖版 9144000 EMU(10in)。
+    var ratios = slides.map(function (s) {
+      if (!isFinite(s.w) || !isFinite(s.h) || s.w <= 0 || s.h <= 0) throw new Error('buildPptx: 图片尺寸非法');
+      return s.w / s.h;
+    });
+    ratios.sort(function (a, b) { return a - b; });
+    var midRatio = ratios[Math.floor(ratios.length / 2)];
+    // 主流幻灯片比例 -> 精确 EMU(PowerPoint 内置页面尺寸)
+    var PRESETS = [
+      [16 / 9, 12192000, 6858000],   // 16:9 宽屏(最常见)
+      [16 / 10, 12192000, 7620000],  // 16:10
+      [3 / 2, 12192000, 8128000],    // 3:2
+      [4 / 3, 9144000, 6858000],     // 4:3 (10in x 7.5in, PowerPoint 标准)
+      [1, 9144000, 9144000],         // 1:1
+      [5 / 4, 9144000, 7315200],     // 5:4
+      [9 / 16, 6858000, 12192000],   // 9:16 竖屏
+      [3 / 4, 7714325, 10287000],    // 3:4 竖屏
+    ];
+    var cx, cy, matched = null;
+    for (var p = 0; p < PRESETS.length; p++) {
+      if (Math.abs(midRatio - PRESETS[p][0]) / PRESETS[p][0] <= 0.02) { matched = PRESETS[p]; break; }
+    }
+    if (matched) {
+      cx = matched[1]; cy = matched[2];
+    } else if (midRatio >= 1) {
+      cx = 12192000; cy = Math.round(12192000 / midRatio);
     } else {
-      cy = 9144000;
-      cx = Math.round(9144000 * first.w / first.h);
+      cy = 9144000; cx = Math.round(9144000 * midRatio);
     }
     if (!isFinite(cx) || !isFinite(cy) || cx <= 0 || cy <= 0) throw new Error('buildPptx: 图片尺寸非法');
 
@@ -353,7 +392,7 @@
       var n = k + 1;
       var ext = (sl.ext || 'jpg').toLowerCase();
       if (ext === 'jpeg') ext = 'jpg';
-      files.push({ name: 'ppt/slides/slide' + n + '.xml', data: str(slideXml(cx, cy)) });
+      files.push({ name: 'ppt/slides/slide' + n + '.xml', data: str(slideXml(cx, cy, sl.w, sl.h)) });
       files.push({ name: 'ppt/slides/_rels/slide' + n + '.xml.rels', data: str(slideRelsXml(n, ext)) });
       files.push({ name: 'ppt/media/image' + n + '.' + ext, data: sl.bytes });
     }

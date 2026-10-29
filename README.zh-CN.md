@@ -57,7 +57,7 @@
 1. 程序化驱动页面自身的 `<video>` 元素：先暂停播放器，再按设定范围逐步设置 `currentTime`。
 2. 每个采样点抓取一帧：计算 48 x 27 灰度签名用于变化检测，同时保留全分辨率 JPEG（宽度上限 1920）作为候选页。
 3. 相邻签名按平均差值比较，超过阈值即开启新片段；每个片段用**最后一帧**（下一次变化前刚稳定的画面）作为该页。
-4. 导出时在浏览器内合成 PPTX：`pptx-builder.js` 内置 CRC32、store-only ZIP 写入器和最小但完整的 OOXML 包（presentation、slideMaster、slideLayout、theme、每页一图），零依赖。弹幕和播放器 UI 是 DOM 覆盖层，帧直接取自视频流，不会出现在导出结果里。
+4. 导出时在浏览器内合成 PPTX：`pptx-builder.js` 内置 CRC32、store-only ZIP 写入器和最小但完整的 OOXML 包（presentation、slideMaster、slideLayout、theme、每页一图），零依赖。幻灯片尺寸由所选页比例的中位数推断：命中主流比例（16:9、16:10、3:2、4:3、1:1、5:4 及其竖版，2% 容差）直接采用 PowerPoint 标准页面尺寸，其他比例按原生比例生成自定义页面；每页图片保持自身比例居中放置，绝不拉伸。弹幕和播放器 UI 是 DOM 覆盖层，帧直接取自视频流，不会出现在导出结果里。
 
 ## 权限说明
 
