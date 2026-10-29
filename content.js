@@ -188,6 +188,30 @@
     return rect;
   }
 
+  // 输出画布上的精裁:源坐标裁剪后仍会有亚像素黑边经缩放混进输出边缘
+  // (实测:636px 输出的最外列/行亮度 112/180,不是内容白底)。
+  // 直接在最终画布上按整数像素再裁一刀,量少(1-2px)且精确。
+  // 返回裁后尺寸 {w,h},无暗边返回 null。
+  function trimOutputEdges(ctx, w, h) {
+    let px;
+    try { px = ctx.getImageData(0, 0, w, h).data; } catch (e) { return null; }
+    const lum = (x, y) => {
+      const o = (y * w + x) * 4;
+      return (px[o] * 299 + px[o + 1] * 587 + px[o + 2] * 114) / 1000;
+    };
+    const DARK = 200;   // 内容白底 249+,残留半暗边 112/180;阈值取中间
+    const rowMean = (y) => { let s = 0, n = 0; for (let x = 0; x < w; x += 2) { s += lum(x, y); n++; } return s / n; };
+    const colMean = (x) => { let s = 0, n = 0; for (let y = 0; y < h; y += 2) { s += lum(x, y); n++; } return s / n; };
+    let top = 0, bottom = 0, left = 0, right = 0;
+    const CAP = Math.floor(Math.min(w, h) * 0.1); // 输出级最多裁 10%
+    while (top < CAP && rowMean(top) < DARK) top++;
+    while (bottom < CAP && rowMean(h - 1 - bottom) < DARK) bottom++;
+    while (left < CAP && colMean(left) < DARK) left++;
+    while (right < CAP && colMean(w - 1 - right) < DARK) right++;
+    if (!top && !bottom && !left && !right) return null;
+    return { top, bottom, left, right };
+  }
+
   function grabFrame(v) {
     let { sx, sy, sw, sh } = regionOf(v);
     // 自动去黑边:检测到的暗边进一步收缩源区域(在用户裁剪之后叠加)
@@ -210,6 +234,19 @@
     capCanvas.width = cw; capCanvas.height = ch;
     try {
       capCtx.drawImage(v, sx, sy, sw, sh, 0, 0, cw, ch);
+      // 精裁:源裁剪+缩放后边缘仍会残留半暗像素,在输出画布上直接按整数像素裁掉。
+      // 用临时画布中转(画布不能自引用裁剪,改尺寸还会清空内容)。
+      const trim = trimOutputEdges(capCtx, cw, ch);
+      if (trim) {
+        const tw = cw - trim.left - trim.right, th = ch - trim.top - trim.bottom;
+        if (tw > 16 && th > 16) {
+          const tmp = document.createElement('canvas');
+          tmp.width = tw; tmp.height = th;
+          tmp.getContext('2d').drawImage(capCanvas, trim.left, trim.top, tw, th, 0, 0, tw, th);
+          capCanvas.width = tw; capCanvas.height = th;
+          capCtx.drawImage(tmp, 0, 0);
+        }
+      }
       sigCtx.drawImage(v, sx, sy, sw, sh, 0, 0, SIG_W, SIG_H);
       var px = sigCtx.getImageData(0, 0, SIG_W, SIG_H).data;
     } catch (e) {
@@ -223,7 +260,7 @@
     return new Promise((resolve) => {
       capCanvas.toBlob((blob) => {
         if (!blob) { resolve(null); return; }
-        blob.arrayBuffer().then((ab) => resolve({ sig, bytes: new Uint8Array(ab), w: cw, h: ch, content: contentOf(sig) }));
+        blob.arrayBuffer().then((ab) => resolve({ sig, bytes: new Uint8Array(ab), w: capCanvas.width, h: capCanvas.height, content: contentOf(sig) }));
       }, 'image/jpeg', 0.9);
     });
   }
@@ -279,9 +316,9 @@
     const seg = {
       bytes: frame.bytes, w: frame.w, h: frame.h, sig: frame.sig,
       time: frame.t,
-      // 疑似重复仍默认勾选(宁多勿少):回翻页用户可能也要;
-      // 徽章提示存在,导出前用户可自行取消
-      checked: true, dupOf,
+      // 回翻/重复页默认不勾选(实测判定准确,重复多):徽章标注来源页,
+      // 想要回翻页点缩略图勾回即可
+      checked: dupOf < 0, dupOf,
       content: frame.content,
       url: URL.createObjectURL(new Blob([frame.bytes], { type: 'image/jpeg' })),
     };
@@ -1021,8 +1058,8 @@
     d.innerHTML = `<img src="${seg.url}" alt="">
       <span class="bp-check">${ICON_CHECK}</span>
       <span class="bp-tc num">${formatTime(seg.time)}</span>
-      ${seg.dupOf >= 0 ? '<span class="bp-dup">疑似重复</span>' : ''}
-      ${seg.buildupOf != null ? '<span class="bp-dup bp-buildup">构建中间态</span>' : ''}`;
+      ${seg.dupOf >= 0 ? `<span class="bp-dup" title="与第 ${seg.dupOf + 1} 页画面相同">回翻→${seg.dupOf + 1}</span>` : ''}
+      ${seg.buildupOf != null ? `<span class="bp-dup bp-buildup" title="第 ${seg.buildupOf + 1} 页的构建中间态">中间态</span>` : ''}`;
     d.addEventListener('click', () => {
       seg.checked = !seg.checked;
       d.className = 'bp-thumb ' + (seg.checked ? 'on' : 'off');
