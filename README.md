@@ -77,8 +77,23 @@ bili-ppt-extractor/
 ├── background.js           # service worker: toolbar click, fallback injection
 ├── content.js              # scanning, change detection, dedup, cropping, UI, export
 ├── pptx-builder.js         # CRC32 + store-only ZIP + minimal OOXML PPTX writer
+├── scripts/lint-repo.mjs   # repository lint: syntax, manifest budget, invariants
+├── docs/                   # architecture, decisions, pitfalls, development guide
 └── icons/                  # extension icons
 ```
+
+## Development
+
+```powershell
+node scripts/lint-repo.mjs   # syntax + manifest permission budget + repo invariants
+```
+
+The lint is zero-dependency (Node 18+) and must pass before every commit.
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the PPTX builder
+structure test, manual acceptance steps, and conventions;
+[docs/DECISIONS.md](docs/DECISIONS.md) and [docs/PITFALLS.md](docs/PITFALLS.md)
+record why the code looks the way it does. AI coding agents: start from
+[AGENTS.md](AGENTS.md).
 
 ## FAQ
 

@@ -77,8 +77,21 @@ bili-ppt-extractor/
 ├── background.js           # service worker：工具栏点击与兜底注入
 ├── content.js              # 扫描、翻页检测、去重、裁剪、界面与导出
 ├── pptx-builder.js         # CRC32 + store-only ZIP + 最小 OOXML PPTX 生成器
+├── scripts/lint-repo.mjs   # 仓库 lint：语法、权限预算、不变量检查
+├── docs/                   # 架构、决策记录、踩坑、开发指南
 └── icons/                  # 扩展图标
 ```
+
+## 开发
+
+```powershell
+node scripts/lint-repo.mjs   # 语法 + manifest 权限预算 + 仓库不变量
+```
+
+lint 零依赖（Node 18+），每次提交前必须通过。PPTX 生成器的结构测试、
+手动验收步骤与各项约定见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)；
+[docs/DECISIONS.md](docs/DECISIONS.md) 与 [docs/PITFALLS.md](docs/PITFALLS.md)
+记录了代码现状的来龙去脉。AI 编程助手请从 [AGENTS.md](AGENTS.md) 开始。
 
 ## 常见问题
 
