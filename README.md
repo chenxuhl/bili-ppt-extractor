@@ -77,32 +77,8 @@ bili-ppt-extractor/
 ├── background.js           # service worker: toolbar click, fallback injection
 ├── content.js              # scanning, change detection, dedup, cropping, UI, export
 ├── pptx-builder.js         # CRC32 + store-only ZIP + minimal OOXML PPTX writer
-├── icons/                  # extension icons
-├── dev-assets/             # icon generation script (Pillow)
-└── dev-test/               # test suites, see Development
+└── icons/                  # extension icons
 ```
-
-## Development
-
-Requirements: Node.js 18+ (only for tests, the extension itself has none) and Python 3 with `python-pptx` and `Pillow`.
-
-### Structure test
-
-Builds a PPTX through the production `pptx-builder.js` under Node, then opens it with `python-pptx` and asserts the package layout:
-
-```powershell
-python dev-test/make_slides.py    # 4 test slides via Pillow
-node   dev-test/build_test_pptx.js # build with the real builder
-python dev-test/validate_pptx.py  # zip integrity + python-pptx checks
-```
-
-### End-to-end test against a real video
-
-`dev-test/e2e/` contains a dependency-free CDP driver (`run_e2e.mjs`) that launches a real headless Edge with the extension loaded, opens a real Bilibili video, drives the actual panel UI over the DevTools protocol, probes the stream to find a static-slide window, runs a real scan, and captures the exported PPTX from the browser's download shelf.
-
-Note for automation: branded Google Chrome 137 and later silently ignore `--load-extension` on the stable channel, so the harness launches Edge instead. Loading the extension by hand as described in [Installation](#installation) works the same in both browsers.
-
-Status: the harness launches Edge with the extension loaded and the Bilibili page renders in headless mode; the fully automated pass (scan plus captured download) is not yet green, so acceptance still runs through the manual steps in [Usage](#usage).
 
 ## FAQ
 
@@ -120,6 +96,14 @@ No. Frames are read from the video stream; danmaku and player UI are DOM overlay
 
 **Live streams and interactive videos?**
 Not supported; the scan needs a finite, seekable stream.
+
+## Legal disclaimer
+
+This extension is a technical tool: it captures frames from the video stream that your browser is already playing, on your own machine, for personal study and archival. The slides inside a video are copyrighted by their authors (the uploader or original course provider). Extracting them does not transfer any rights. Whether you may keep, share, or reuse the exported material — for course review, note-taking, teaching, or anything commercial — is your responsibility to determine under the copyright of the original content and Bilibili's terms of service. Do not redistribute extracted slides without the copyright holder's permission.
+
+## Privacy
+
+The extension collects nothing. There are no network requests, no analytics, no telemetry. Your settings (interval, threshold, crop, time range) are stored locally in `chrome.storage.local` and never leave your device. Everything — frame capture, slide detection, PPTX assembly — happens in your browser tab and the exported file goes straight to your downloads folder.
 
 ## Contributing
 

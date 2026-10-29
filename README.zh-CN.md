@@ -77,32 +77,8 @@ bili-ppt-extractor/
 ├── background.js           # service worker：工具栏点击与兜底注入
 ├── content.js              # 扫描、翻页检测、去重、裁剪、界面与导出
 ├── pptx-builder.js         # CRC32 + store-only ZIP + 最小 OOXML PPTX 生成器
-├── icons/                  # 扩展图标
-├── dev-assets/             # 图标生成脚本（Pillow）
-└── dev-test/               # 测试套件，见「开发与测试」
+└── icons/                  # 扩展图标
 ```
-
-## 开发与测试
-
-依赖：Node.js 18+（仅测试需要，扩展本身零依赖）、Python 3（需 `python-pptx` 与 `Pillow`）。
-
-### 结构测试
-
-用生产的 `pptx-builder.js` 在 Node 里构建 PPTX，再用 python-pptx 打开并校验包结构：
-
-```powershell
-python dev-test/make_slides.py    # Pillow 生成 4 张测试幻灯片
-node   dev-test/build_test_pptx.js # 用真实构建器构建
-python dev-test/validate_pptx.py  # zip 完整性 + python-pptx 校验
-```
-
-### 真实视频端到端测试
-
-`dev-test/e2e/` 提供零依赖的 CDP 驱动（`run_e2e.mjs`）：启动真实无头 Edge 并加载扩展，打开真实B站视频，通过 DevTools 协议驱动真实的面板界面，探测视频流找出静态幻灯片时间窗，执行真实扫描，并从浏览器下载目录捕获导出的 PPTX。
-
-自动化提示：正式版 Google Chrome 137 及以上在稳定通道会静默忽略 `--load-extension`，因此测试框架改用 Edge。手动加载扩展在两个浏览器中效果完全相同。
-
-当前状态：测试框架已能以无头 Edge 加载扩展并正常渲染B站页面；完整自动流程（扫描并捕获下载产物）尚未跑通，验收仍以「使用」一节的手动步骤为准。
 
 ## 常见问题
 
@@ -120,6 +96,14 @@ python dev-test/validate_pptx.py  # zip 完整性 + python-pptx 校验
 
 **直播、互动视频支持吗？**
 不支持，扫描需要有限时长的可跳转视频流。
+
+## 免责声明
+
+本扩展是一个技术工具：在你的设备上，从浏览器正在播放的视频流中截取画面，供个人学习与留存。视频中的幻灯片版权归其作者（UP主或原课程方）所有，提取不意味着获得任何授权。导出内容的保留、分享与再使用（课程复习、笔记、教学或任何商用场景）是否合规，由你依据原内容的版权及B站服务条款自行判断。未经版权方许可，请勿传播提取出的幻灯片。
+
+## 隐私
+
+本扩展不收集任何数据：无网络请求、无统计、无遥测。你的设置（间隔、阈值、裁剪、时间范围）仅保存在本地 `chrome.storage.local`，绝不离开你的设备。抽帧、翻页检测、PPTX 合成全部发生在浏览器标签页内，导出文件直接进入下载目录。
 
 ## 参与贡献
 
