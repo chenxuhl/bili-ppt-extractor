@@ -178,12 +178,12 @@
     // 换算回视频源坐标(W 可能小于 vw),补 1px 余量宁可多裁不残留黑线
     const k = vw / W;
     const rect = {
-      sx: Math.max(0, Math.floor(left * k) - (left > 0 ? 1 : 0)),
-      sy: Math.max(0, Math.floor(top * (vh / H)) - (top > 0 ? 1 : 0)),
+      sx: Math.max(0, Math.ceil(left * k) + (left > 0 ? 1 : 0)),
+      sy: Math.max(0, Math.ceil(top * (vh / H)) + (top > 0 ? 1 : 0)),
       sw: 0, sh: 0,
     };
-    rect.sw = Math.min(vw - rect.sx, Math.round((W - left - right) * k) + (left > 0 ? 1 : 0) + (right > 0 ? 1 : 0));
-    rect.sh = Math.min(vh - rect.sy, Math.round((H - top - bottom) * (vh / H)) + (top > 0 ? 1 : 0) + (bottom > 0 ? 1 : 0));
+    rect.sw = Math.max(16, Math.min(vw - rect.sx, Math.floor((W - left - right) * k) - (right > 0 ? 1 : 0)));
+    rect.sh = Math.max(16, Math.min(vh - rect.sy, Math.floor((H - top - bottom) * (vh / H)) - (bottom > 0 ? 1 : 0)));
     if (rect.sw < vw * MIN_INNER || rect.sh < vh * MIN_INNER) return null;
     return rect;
   }
@@ -304,25 +304,33 @@
     return contentOf(sig) < 3;
   }
 
-  // 收尾合并:渐进构建兜底。
-  // 双阈值已把多数动画中间态并入同段;若个别中间态差异恰好超过翻页阈值被切段,
-  // 判定条件(两个都要满足,防误杀内容量天然偏低的正常页):
-  //   a) 前段内容量明显低于后段(画面更空 < 60%)
-  //   b) 两段画面"同源"——签名差异在翻页量级以下(是同一页的渐进变体),
-  //      而不是两张完全不同的正常页
+  // 收尾合并:渐进构建识别。
+  // 切段用宁多勿少的低阈值,多切出来的动画中间态在这里统一处理。
+  // 判定某段是"构建中间态"(默认不勾选)的条件(全部满足):
+  //   a) 与后续某段(不限于紧邻)画面"同族"——签名差异低于阈值×1.4
+  //      (与去重同一量级:同一页的不同构建步骤,画面仍有明显重合)
+  //   b) 内容量比该后续段明显低(画面更空 < 65%):中间态只可能比成品空
+  //   c) 时间上在其之前(构建先于成品)
+  // 动画步进序列 [空白页 → 半成品 → 完整页] 会把前两个标成中间态,
+  // 保留完整的。真正的独立页(分时/实时)与任何后续段都不同族,不受影响。
   function mergeBuildups() {
     const segs = state.segments;
     let changed = false;
-    for (let i = 0; i < segs.length - 1; i++) {
-      const cur = segs[i], nxt = segs[i + 1];
-      if (!cur.checked || !nxt) continue;
-      const sameFamily = diff(cur.sig, nxt.sig) < state.settings.threshold * 3;
-      if (sameFamily &&
-          cur.content != null && nxt.content != null &&
-          cur.content < nxt.content * 0.6) {
+    const th = state.settings.threshold;
+    for (let i = 0; i < segs.length; i++) {
+      const cur = segs[i];
+      if (!cur.checked) continue;
+      for (let j = i + 1; j < segs.length; j++) {
+        const nxt = segs[j];
+        if (!nxt) continue;
+        if (diff(cur.sig, nxt.sig) > th * 1.4) continue;       // a) 同族
+        if (cur.content == null || nxt.content == null) continue;
+        if (cur.content >= nxt.content * 0.65) continue;        // b) 明显更空
+        // c) 顺序天然满足(i<j)。命中:cur 是 j 的构建中间态
         cur.checked = false;
-        cur.buildupOf = i + 1;
+        cur.buildupOf = j;
         changed = true;
+        break;
       }
     }
     if (changed) renderThumbs();
@@ -349,19 +357,7 @@
 
     const total = Math.ceil((end - start) / step);
     const t0 = performance.now();
-    let count = 0, prevSig = null, lastFrame = null, anchorSig = null, missed = 0;
-
-    // 三区间判定:
-    //   d > hardTh (剧变)      → 立即翻页(整页换内容)
-    //   softTh < d <= hardTh    → 中间区,再看"与段锚帧 anchorSig"的累计差异:
-    //                              动画:每步小,画面虽变但累计仍接近锚(内容在锚上叠加) → 同段;
-    //                              渐进翻页:累计已远离锚 → 翻页
-    //   d <= softTh             → 同段
-    // 锚帧 = 段内画面与上一切段点最接近的帧(动画起点),它随段缓慢漂移到
-    // 画面稳定处,但只有切段才重置。
-    // 这样既不把动画中间态当独立页(空白页),也不吞掉渐进式翻页(丢页)。
-    const softTh = threshold;
-    const hardTh = threshold * 3;
+    let count = 0, prevSig = null, lastFrame = null, missed = 0;
 
     for (let t = start; t < end && !state.abort; t += step) {
       const cap = await captureAt(v, Math.min(t, end - 0.05));
@@ -375,20 +371,18 @@
         }
         if (prevSig) {
           const d = diff(prevSig, cap.sig);
-          if (!anchorSig) anchorSig = cap.sig;
-          const dFromAnchor = diff(anchorSig, cap.sig);
-          if (d > hardTh || (d > softTh && dFromAnchor > hardTh)) {
+          if (d > threshold) {
+            // 切段宁多勿少:超过用户阈值即翻页。多切出来的动画中间态
+            // 由扫描结束后的 mergeBuildups() 统一识别并默认不勾选。
+            // 历史教训:提高切段阈值(×3)会吞掉"每步差异小"的渐进式翻页,
+            // 丢真页的代价远大于多出几页中间态。
             finalizeSegment(lastFrame); // 上一段最后一帧（已稳定）
             lastFrame = cap;
-            anchorSig = cap.sig;
           } else {
-            lastFrame = cap; // 同段内(含动画步进)持续后移，取靠近翻页前的稳定帧
-            // 段内画面稳定后(小差异)漂移锚,避免锚过老导致长段累积误判
-            if (d <= softTh) anchorSig = cap.sig;
+            lastFrame = cap; // 同段内持续后移，取靠近翻页前的稳定帧
           }
         } else {
           lastFrame = cap;
-          anchorSig = cap.sig;
         }
         prevSig = cap.sig;
       } else {
