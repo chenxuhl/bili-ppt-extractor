@@ -102,47 +102,89 @@
   }
 
   // 自动检测视频帧的暗边(letterbox/pillarbox 黑边)并返回有效内容区域。
-  // 原理:从每条边向内逐行/列检测亮度均值,亮度低于阈值的行/列视为边。
+  // 以原始分辨率逐列/行检测——超细黑边(1-2px)在任何缩放画布上都会被
+  // 稀释到均值采不到,必须全分辨率。只读边缘条带,代价可忽略。
   // 返回 {sx,sy,sw,sh} 视频源坐标;无暗边时返回 null。
   function detectDarkEdges(v) {
     const vw = v.videoWidth, vh = v.videoHeight;
     if (!vw || !vh) return null;
-    // 用小画布做边缘检测(快,精度足够:每 8px 一档)
-    const W = 64, H = Math.max(8, Math.round(64 * vh / vw));
+    // 检测画布:原始分辨率(上限 1920 防极端)
+    const W = Math.min(vw, 1920), H = Math.round(W * vh / vw);
     const c = document.createElement('canvas');
     c.width = W; c.height = H;
     const ctx = c.getContext('2d', { willReadFrequently: true });
-    try { ctx.drawImage(v, 0, 0, W, H); } catch (e) { return null; }
     let px;
-    try { px = ctx.getImageData(0, 0, W, H).data; } catch (e) { return null; }
+    try {
+      ctx.drawImage(v, 0, 0, W, H);
+      px = ctx.getImageData(0, 0, W, H).data;
+    } catch (e) { return null; }
     const lum = (x, y) => {
       const o = (y * W + x) * 4;
       return (px[o] * 299 + px[o + 1] * 587 + px[o + 2] * 114) / 1000;
     };
-    // 行/列亮度均值(采样少量像素)
-    const rowMean = (y) => { let s = 0; for (let x = 0; x < W; x += 4) s += lum(x, y); return s / (W / 4); };
-    const colMean = (x) => { let s = 0; for (let y = 0; y < H; y += 4) s += lum(x, y); return s / (H / 4); };
 
-    const DARK = 24;            // 亮度 < 24 视为暗(黑边常带轻微压缩噪点)
-    const MAX_EDGE = 0.18;      // 最多裁掉 18% 防止误裁深色课件
-    // 每条边先找到"最暗行/列"确认存在暗边,再向内推进,避免深色背景误判
-    let top = 0, bottom = 0, left = 0, right = 0;
-    while (top < H * MAX_EDGE && rowMean(top) < DARK) top++;
-    while (bottom < H * MAX_EDGE && rowMean(H - 1 - bottom) < DARK) bottom++;
-    while (left < W * MAX_EDGE && colMean(left) < DARK) left++;
-    while (right < W * MAX_EDGE && colMean(W - 1 - right) < DARK) right++;
-    // 换算回视频源坐标,对齐偶数像素(避免奇数尺寸)
-    const rect = {
-      sx: Math.round(left / W * vw) & ~1,
-      sy: Math.round(top / H * vh) & ~1,
-      sw: Math.round((W - left - right) / W * vw) & ~1,
-      sh: Math.round((H - top - bottom) / H * vh) & ~1,
+    const DARK = 60;               // 深色列/行阈值(实测黑边亮度 17-97,内容白底 249)
+    const MIN_INNER = 0.45;        // 裁后至少保留 45% 内容,防误裁深色课件
+
+    // 边缘列/行:采样该列/行全部像素,均值 < DARK 即为暗边列/行。
+    // 逐列推进(1px 步进),超细边也能检出。
+    const colMean = (x) => {
+      let s = 0, n = 0;
+      for (let y = 0; y < H; y += 2) { s += lum(x, y); n++; }
+      return s / n;
     };
-    // 裁得太狠或尺寸非法 → 放弃
-    if (rect.sw < vw * 0.4 || rect.sh < vh * 0.4) return null;
-    if (rect.sx + rect.sw > vw || rect.sy + rect.sh > vh) return null;
-    // 实际没裁到东西 → 无黑边
+    const rowMean = (y) => {
+      let s = 0, n = 0;
+      for (let x = 0; x < W; x += 2) { s += lum(x, y); n++; }
+      return s / n;
+    };
+    // 边缘容差:JPEG 边缘振铃会让最外 1 列/行偏亮(如右缘 x=639 均值 85
+    // 而真正的 1px 黑边在 x=638 均值 17)。所以每边看最外 3 列/行中
+    // 是否存在暗列,存在则继续向内推进。
+    const EDGE_TOLERANCE = 3;
+    function darkAheadCol(base, dir) {
+      for (let k = 1; k <= EDGE_TOLERANCE; k++) {
+        const x = base + dir * k;
+        if (x >= 0 && x < W && colMean(x) < DARK) return true;
+      }
+      return false;
+    }
+    function darkAheadRow(base, dir) {
+      for (let k = 1; k <= EDGE_TOLERANCE; k++) {
+        const y = base + dir * k;
+        if (y >= 0 && y < H && rowMean(y) < DARK) return true;
+      }
+      return false;
+    }
+    let left = 0, top = 0, right = 0, bottom = 0;
+    while (left < W * (1 - MIN_INNER)) {
+      if (colMean(left) < DARK || darkAheadCol(left, 1)) { left++; continue; }
+      break;
+    }
+    while (top < H * (1 - MIN_INNER)) {
+      if (rowMean(top) < DARK || darkAheadRow(top, 1)) { top++; continue; }
+      break;
+    }
+    while (right < W * (1 - MIN_INNER)) {
+      if (colMean(W - 1 - right) < DARK || darkAheadCol(W - 1 - right, -1)) { right++; continue; }
+      break;
+    }
+    while (bottom < H * (1 - MIN_INNER)) {
+      if (rowMean(H - 1 - bottom) < DARK || darkAheadRow(H - 1 - bottom, -1)) { bottom++; continue; }
+      break;
+    }
+
     if (left === 0 && right === 0 && top === 0 && bottom === 0) return null;
+    // 换算回视频源坐标(W 可能小于 vw),补 1px 余量宁可多裁不残留黑线
+    const k = vw / W;
+    const rect = {
+      sx: Math.max(0, Math.floor(left * k) - (left > 0 ? 1 : 0)),
+      sy: Math.max(0, Math.floor(top * (vh / H)) - (top > 0 ? 1 : 0)),
+      sw: 0, sh: 0,
+    };
+    rect.sw = Math.min(vw - rect.sx, Math.round((W - left - right) * k) + (left > 0 ? 1 : 0) + (right > 0 ? 1 : 0));
+    rect.sh = Math.min(vh - rect.sy, Math.round((H - top - bottom) * (vh / H)) + (top > 0 ? 1 : 0) + (bottom > 0 ? 1 : 0));
+    if (rect.sw < vw * MIN_INNER || rect.sh < vh * MIN_INNER) return null;
     return rect;
   }
 
@@ -236,7 +278,10 @@
     }
     const seg = {
       bytes: frame.bytes, w: frame.w, h: frame.h, sig: frame.sig,
-      time: frame.t, checked: dupOf < 0, dupOf,
+      time: frame.t,
+      // 疑似重复仍默认勾选(宁多勿少):回翻页用户可能也要;
+      // 徽章提示存在,导出前用户可自行取消
+      checked: true, dupOf,
       content: frame.content,
       url: URL.createObjectURL(new Blob([frame.bytes], { type: 'image/jpeg' })),
     };
@@ -259,16 +304,22 @@
     return contentOf(sig) < 3;
   }
 
-  // 收尾合并：渐进构建兜底。
+  // 收尾合并:渐进构建兜底。
   // 双阈值已把多数动画中间态并入同段;若个别中间态差异恰好超过翻页阈值被切段,
-  // 相邻两段中内容量明显更低(画面更空)的段是构建中间态,默认不勾选。
+  // 判定条件(两个都要满足,防误杀内容量天然偏低的正常页):
+  //   a) 前段内容量明显低于后段(画面更空 < 60%)
+  //   b) 两段画面"同源"——签名差异在翻页量级以下(是同一页的渐进变体),
+  //      而不是两张完全不同的正常页
   function mergeBuildups() {
     const segs = state.segments;
     let changed = false;
     for (let i = 0; i < segs.length - 1; i++) {
       const cur = segs[i], nxt = segs[i + 1];
       if (!cur.checked || !nxt) continue;
-      if (cur.content != null && nxt.content != null && cur.content < nxt.content * 0.6) {
+      const sameFamily = diff(cur.sig, nxt.sig) < state.settings.threshold * 3;
+      if (sameFamily &&
+          cur.content != null && nxt.content != null &&
+          cur.content < nxt.content * 0.6) {
         cur.checked = false;
         cur.buildupOf = i + 1;
         changed = true;
